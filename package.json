@@ -1,5 +1,4 @@
-# Install dependencies
-npm init -y
+# Install dependencies dulu
 npm install express socket.io cors
 
 # Jalankan server
