@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Chat Support</title>
+    <title>Live Chat - Customer Support</title>
     <style>
         * {
             margin: 0;
@@ -71,10 +71,25 @@
             animation: pulse 2s infinite;
         }
 
+        .status-dot.offline {
+            background: #f44336;
+        }
+
         @keyframes pulse {
             0% { opacity: 1; }
             50% { opacity: 0.5; }
             100% { opacity: 1; }
+        }
+
+        .connection-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255,255,255,0.9);
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 11px;
+            color: #666;
         }
 
         .chat-messages {
@@ -133,6 +148,18 @@
             margin-top: 5px;
         }
 
+        .typing-indicator {
+            display: none;
+            padding: 10px 20px;
+            font-size: 12px;
+            color: #666;
+            font-style: italic;
+        }
+
+        .typing-indicator.active {
+            display: block;
+        }
+
         .chat-input {
             position: absolute;
             bottom: 0;
@@ -184,64 +211,44 @@
             transform: none;
         }
 
-        .typing-indicator {
-            display: none;
-            padding: 10px 20px;
-            font-size: 12px;
-            color: #666;
-            font-style: italic;
+        .no-operator {
+            text-align: center;
+            color: #999;
+            padding: 50px 20px;
+            font-size: 14px;
         }
 
-        .typing-indicator.active {
-            display: block;
-        }
-
-        /* Responsive Design */
-        @media (max-width: 480px) {
-            .chat-container {
-                width: 100%;
-                height: 100vh;
-                border-radius: 0;
-            }
-        }
-
-        /* Scrollbar Styling */
-        .chat-messages::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .chat-messages::-webkit-scrollbar-track {
-            background: #f1f1f1;
-        }
-
-        .chat-messages::-webkit-scrollbar-thumb {
-            background: #ccc;
-            border-radius: 3px;
-        }
-
-        .chat-messages::-webkit-scrollbar-thumb:hover {
-            background: #999;
+        .waiting-operator {
+            text-align: center;
+            color: #667eea;
+            padding: 20px;
+            background: #f0f4ff;
+            border-radius: 10px;
+            margin: 20px;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
     <div class="chat-container">
+        <div class="connection-status" id="connectionStatus">
+            Menghubungkan...
+        </div>
+        
         <div class="chat-header">
-            <div class="operator-avatar">👨‍💼</div>
+            <div class="operator-avatar" id="operatorAvatar">👨‍💼</div>
             <div class="operator-info">
-                <h3>Customer Service</h3>
+                <h3 id="operatorName">Customer Service</h3>
                 <div class="status">
-                    <div class="status-dot"></div>
-                    Online
+                    <div class="status-dot" id="statusDot"></div>
+                    <span id="statusText">Menghubungkan...</span>
                 </div>
             </div>
         </div>
         
         <div class="chat-messages" id="chatMessages">
-            <div class="message operator">
-                <div class="message-bubble">
-                    Halo! 👋 Saya adalah operator customer service. Ada yang bisa saya bantu hari ini?
-                </div>
+            <div class="waiting-operator" id="waitingMessage">
+                ⏳ Sedang menghubungkan ke operator...
             </div>
         </div>
         
@@ -256,20 +263,22 @@
                 id="messageInput" 
                 placeholder="Ketik pesan anda..."
                 maxlength="500"
+                disabled
             >
-            <button class="send-btn" id="sendBtn">
+            <button class="send-btn" id="sendBtn" disabled>
                 ➤
             </button>
         </div>
     </div>
 
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
     <script>
-        class LiveChat {
+        class CustomerChat {
             constructor() {
                 this.socket = null;
                 this.userId = this.generateUserId();
-                this.operatorId = 'operator_1';
-                this.isConnected = false;
+                this.connected = false;
+                this.operatorAssigned = false;
                 
                 this.initializeElements();
                 this.setupEventListeners();
@@ -281,6 +290,11 @@
                 this.messageInput = document.getElementById('messageInput');
                 this.sendBtn = document.getElementById('sendBtn');
                 this.typingIndicator = document.getElementById('typingIndicator');
+                this.connectionStatus = document.getElementById('connectionStatus');
+                this.statusDot = document.getElementById('statusDot');
+                this.statusText = document.getElementById('statusText');
+                this.operatorName = document.getElementById('operatorName');
+                this.waitingMessage = document.getElementById('waitingMessage');
             }
 
             setupEventListeners() {
@@ -288,8 +302,6 @@
                 this.messageInput.addEventListener('keypress', (e) => {
                     if (e.key === 'Enter') {
                         this.sendMessage();
-                    } else {
-                        this.sendTypingIndicator();
                     }
                 });
             }
@@ -299,65 +311,116 @@
             }
 
             connectToServer() {
-                // Simulasi koneksi WebSocket
-                // Di production, ganti dengan koneksi WebSocket yang sesungguhnya
-                this.simulateWebSocketConnection();
+                // Koneksi ke WebSocket server
+                this.socket = io('http://localhost:3001', {
+                    transports: ['websocket'],
+                    reconnection: true,
+                    reconnectionAttempts: 5,
+                    reconnectionDelay: 2000
+                });
+
+                this.socket.on('connect', () => {
+                    console.log('✅ Terhubung ke server chat');
+                    this.connected = true;
+                    this.updateConnectionStatus('Terhubung', true);
+                    
+                    // Register user ke server
+                    this.socket.emit('register_user', {
+                        userId: this.userId
+                    });
+                });
+
+                this.socket.on('disconnect', () => {
+                    console.log('❌ Terputus dari server');
+                    this.connected = false;
+                    this.operatorAssigned = false;
+                    this.updateConnectionStatus('Terputus', false);
+                    this.disableChat();
+                });
+
+                this.socket.on('operator_assigned', (data) => {
+                    console.log('✅ Operator ditugaskan:', data);
+                    this.operatorAssigned = true;
+                    this.updateOperatorInfo(data);
+                    this.enableChat();
+                    this.addSystemMessage(`🎉 Anda terhubung dengan ${data.operatorName}`);
+                });
+
+                this.socket.on('new_message', (data) => {
+                    this.addMessageToChat(data.message, 'operator');
+                    this.hideTypingIndicator();
+                });
+
+                this.socket.on('operator_typing', () => {
+                    this.showTypingIndicator();
+                });
+
+                this.socket.on('operator_stopped_typing', () => {
+                    this.hideTypingIndicator();
+                });
+
+                this.socket.on('no_operator_available', () => {
+                    this.showNoOperatorMessage();
+                });
+
+                // Error handling
+                this.socket.on('connect_error', (error) => {
+                    console.error('Connection error:', error);
+                    this.updateConnectionStatus('Gagal terhubung', false);
+                });
             }
 
-            simulateWebSocketConnection() {
-                this.isConnected = true;
-                console.log('Terhubung ke server chat');
-                
-                // Simulasi pesan dari operator
-                setTimeout(() => {
-                    this.receiveMessage("Saya siap membantu anda. Silakan tanyakan apa saja!");
-                }, 3000);
+            updateConnectionStatus(text, connected) {
+                this.connectionStatus.textContent = text;
+                this.statusText.textContent = connected ? 'Online' : 'Offline';
+                this.statusDot.className = connected ? 'status-dot' : 'status-dot offline';
+            }
+
+            updateOperatorInfo(data) {
+                this.operatorName.textContent = data.operatorName;
+                this.waitingMessage.style.display = 'none';
+            }
+
+            enableChat() {
+                this.messageInput.disabled = false;
+                this.sendBtn.disabled = false;
+            }
+
+            disableChat() {
+                this.messageInput.disabled = true;
+                this.sendBtn.disabled = true;
+            }
+
+            showNoOperatorMessage() {
+                this.chatMessages.innerHTML = `
+                    <div class="no-operator">
+                        🙏 Maaf, semua operator sedang sibuk.<br>
+                        Silakan coba beberapa saat lagi.
+                    </div>
+                `;
             }
 
             sendMessage() {
                 const message = this.messageInput.value.trim();
-                if (!message || !this.isConnected) return;
+                if (!message || !this.connected || !this.operatorAssigned) return;
 
                 // Tambahkan pesan user ke chat
                 this.addMessageToChat(message, 'user');
                 
+                // Kirim ke server
+                this.socket.emit('send_message', {
+                    userId: this.userId,
+                    message: message
+                });
+                
                 // Clear input
                 this.messageInput.value = '';
-                
-                // Kirim ke server (simulasi)
-                this.simulateSendToServer(message);
                 
                 // Disable tombol sementara
                 this.sendBtn.disabled = true;
                 setTimeout(() => {
                     this.sendBtn.disabled = false;
                 }, 1000);
-            }
-
-            simulateSendToServer(message) {
-                console.log('Mengirim pesan:', message);
-                
-                // Simulasi balasan operator
-                setTimeout(() => {
-                    this.showTypingIndicator();
-                    
-                    setTimeout(() => {
-                        this.hideTypingIndicator();
-                        const responses = [
-                            "Terima kasih atas pertanyaannya. Saya akan bantu segera.",
-                            "Baik, saya mengerti. Apakah ada detail lain yang ingin anda sampaikan?",
-                            "Saya akan cek informasi tersebut untuk anda.",
-                            "Untuk kasus seperti ini, saya sarankan...",
-                            "Apakah ada hal lain yang bisa saya bantu?"
-                        ];
-                        const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-                        this.receiveMessage(randomResponse);
-                    }, 2000);
-                }, 1000);
-            }
-
-            receiveMessage(message) {
-                this.addMessageToChat(message, 'operator');
             }
 
             addMessageToChat(message, sender) {
@@ -380,6 +443,18 @@
                 this.scrollToBottom();
             }
 
+            addSystemMessage(message) {
+                const messageDiv = document.createElement('div');
+                messageDiv.style.textAlign = 'center';
+                messageDiv.style.padding = '10px';
+                messageDiv.style.color = '#666';
+                messageDiv.style.fontSize = '12px';
+                messageDiv.textContent = message;
+                
+                this.chatMessages.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+
             showTypingIndicator() {
                 this.typingIndicator.classList.add('active');
                 this.scrollToBottom();
@@ -389,11 +464,6 @@
                 this.typingIndicator.classList.remove('active');
             }
 
-            sendTypingIndicator() {
-                // Kirig indikator typing ke server
-                // Implementasi sesuai kebutuhan
-            }
-
             scrollToBottom() {
                 this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
             }
@@ -401,7 +471,7 @@
 
         // Inisialisasi chat saat halaman dimuat
         document.addEventListener('DOMContentLoaded', () => {
-            new LiveChat();
+            new CustomerChat();
         });
     </script>
 </body>
