@@ -1,0 +1,6 @@
+# Install dependencies
+npm init -y
+npm install express socket.io cors
+
+# Jalankan server
+node server.js
